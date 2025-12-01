@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Climate Displacement Predictor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+
+<body class="min-h-screen text-white">
+<div class="max-w-7xl mx-auto p-6 space-y-8">
+
+    <!-- HEADER -->
+    <div class="text-center space-y-4 py-8">
+        <h1 class="text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-cyan-300 to-blue-500">
+            🌍 Climate Displacement Predictor
+        </h1>
+        <p class="text-xl text-blue-200 max-w-3xl mx-auto">
+            Explore how climate change and disasters will impact human displacement by 2030. 
+            Select a country, choose a scenario, and see the future unfold.
+        </p>
+    </div>
+
+    <!-- MAP SELECTION -->
+    <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 shadow-2xl" x-data>
+        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+            <span class="text-3xl">📍</span>
+            Step 1: Select a Country
+        </h2>
+
+        <template x-if="$store.country.iso3">
+            <div class="mb-4 inline-block px-4 py-2 rounded-lg bg-blue-500/30 border border-blue-400/50">
+                <span class="text-sm text-blue-200">Selected: </span>
+                <span class="font-bold text-white" x-text="$store.country.name + ' (' + $store.country.iso3 + ')'"></span>
+            </div>
+        </template>
+
+        <div id="map" class="w-full h-96 rounded-xl border border-white/30 shadow-lg"></div>
+    </div>
+
+    <!-- SCENARIO PREDICTOR -->
+    <div x-data="scenarioPredictor()" class="space-y-6">
+        
+        <!-- SCENARIO CARDS -->
+        <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 shadow-2xl">
+            <h2 class="text-2xl font-bold mb-6 flex items-center gap-2">
+                <span class="text-3xl">🎭</span>
+                Step 2: Choose a Future Scenario
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                
+                <button @click="loadScenario('current')" 
+                        :class="selectedScenario === 'current' ? 'ring-4 ring-green-400 bg-green-500/30' : 'bg-white/5 hover:bg-white/10'"
+                        class="p-6 rounded-xl border border-white/20 transition-all duration-300 text-left">
+                    <div class="text-4xl mb-3">📊</div>
+                    <h3 class="text-lg font-bold mb-2 text-green-300">Current Baseline</h3>
+                    <p class="text-sm text-gray-300">Moderate climate conditions with typical disaster frequency</p>
+                    <div class="mt-3 text-xs text-gray-400">~2024 levels</div>
+                </button>
+
+                <button @click="loadScenario('optimistic')" 
+                        :class="selectedScenario === 'optimistic' ? 'ring-4 ring-blue-400 bg-blue-500/30' : 'bg-white/5 hover:bg-white/10'"
+                        class="p-6 rounded-xl border border-white/20 transition-all duration-300 text-left">
+                    <div class="text-4xl mb-3">🌱</div>
+                    <h3 class="text-lg font-bold mb-2 text-blue-300">Optimistic</h3>
+                    <p class="text-sm text-gray-300">Climate action succeeds, +1.5°C warming, fewer disasters</p>
+                    <div class="mt-3 text-xs text-gray-400">Paris Agreement met</div>
+                </button>
+
+                <button @click="loadScenario('business')" 
+                        :class="selectedScenario === 'business' ? 'ring-4 ring-orange-400 bg-orange-500/30' : 'bg-white/5 hover:bg-white/10'"
+                        class="p-6 rounded-xl border border-white/20 transition-all duration-300 text-left">
+                    <div class="text-4xl mb-3">📈</div>
+                    <h3 class="text-lg font-bold mb-2 text-orange-300">Business as Usual</h3>
+                    <p class="text-sm text-gray-300">Current trends continue, +2.5°C warming, rising disasters</p>
+                    <div class="mt-3 text-xs text-gray-400">No policy change</div>
+                </button>
+
+                <button @click="loadScenario('worst')" 
+                        :class="selectedScenario === 'worst' ? 'ring-4 ring-red-400 bg-red-500/30' : 'bg-white/5 hover:bg-white/10'"
+                        class="p-6 rounded-xl border border-white/20 transition-all duration-300 text-left">
+                    <div class="text-4xl mb-3">🔥</div>
+                    <h3 class="text-lg font-bold mb-2 text-red-300">Worst Case</h3>
+                    <p class="text-sm text-gray-300">Accelerated warming +4°C, extreme events multiply</p>
+                    <div class="mt-3 text-xs text-gray-400">High emissions path</div>
+                </button>
+
+            </div>
+        </div>
+
+        <!-- ADVANCED CONTROLS -->
+        <div class="bg-white/10 backdrop-blur-lg rounded-2xl border border-white/20 shadow-2xl overflow-hidden">
+            <button @click="showAdvanced = !showAdvanced" 
+                    class="w-full p-6 text-left flex items-center justify-between hover:bg-white/5 transition">
+                <h3 class="text-xl font-bold flex items-center gap-2">
+                    <span class="text-2xl">⚙️</span>
+                    Advanced: Customize Scenario
+                </h3>
+                <span class="text-2xl" x-text="showAdvanced ? '▼' : '▶'"></span>
+            </button>
+
+            <div x-show="showAdvanced" x-collapse class="p-6 pt-0 space-y-6">
+                
+                <div>
+                    <h4 class="text-lg font-semibold mb-4 text-blue-300">🌡️ Climate Variables</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <template x-for="(meta, key) in climateLabels" :key="key">
+                            <div class="bg-white/5 p-4 rounded-lg border border-white/10">
+                                <label class="text-sm font-medium text-gray-200" x-text="meta.title"></label>
+                                <input type="range" class="w-full mt-2" 
+                                       :min="meta.min" :max="meta.max" :step="meta.step"
+                                       x-model.number="climate[key]"
+                                       @input="selectedScenario = 'custom'">
+                                <div class="text-xs text-gray-400 mt-1">
+                                    <span x-text="climate[key]"></span>
+                                    <span x-text="meta.unit"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 class="text-lg font-semibold mb-4 text-orange-300">🌪️ Disaster Events</h4>
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                        <template x-for="(meta, key) in disasterLabels" :key="key">
+                            <div class="bg-white/5 p-4 rounded-lg border border-white/10">
+                                <label class="text-sm font-medium text-gray-200" x-text="meta.title"></label>
+                                <input type="range" class="w-full mt-2" min="0" max="10" step="1"
+                                       x-model.number="disaster[key]"
+                                       @input="selectedScenario = 'custom'">
+                                <div class="text-xs text-gray-400 mt-1" x-text="disaster[key]"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- PREDICT BUTTON -->
+        <div class="text-center">
+            <button @click="predictFuture()"
+                    :disabled="!$store.country.iso3"
+                    class="px-12 py-4 text-xl font-bold rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-2xl transform hover:scale-105 transition-all duration-300">
+                🔮 Predict 2030 Displacement
+            </button>
+            <p class="text-sm text-gray-400 mt-2" x-show="!$store.country.iso3">
+                Please select a country first
+            </p>
+        </div>
+
+        <!-- RESULTS -->
+        <template x-if="result">
+            <div class="bg-gradient-to-br from-purple-900/50 to-pink-900/50 backdrop-blur-lg rounded-2xl p-8 border border-purple-400/30 shadow-2xl">
+                
+                <div class="text-center mb-8">
+                    <h3 class="text-3xl font-bold mb-4 text-purple-200">📊 Predicted Displacement in 2030</h3>
+                    <div class="text-7xl font-black bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-400 mb-2">
+                        <span x-text="Number(result.prediction).toLocaleString()"></span>
+                    </div>
+                    <div class="text-2xl text-purple-200">people displaced</div>
+                    
+                    <template x-if="result.displacement_percent_of_population !== undefined">
+                        <div class="mt-4 text-lg text-purple-300">
+                            <span x-text="result.displacement_percent_of_population.toFixed(2)"></span>% of population
+                            <span class="text-sm text-purple-400">
+                                (Pop: <span x-text="Number(result.population).toLocaleString()"></span>)
+                            </span>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="flex justify-center mb-6">
+                    <div class="inline-flex items-center gap-2 px-6 py-3 rounded-full text-lg font-bold"
+                         :class="{
+                             'bg-green-500/30 border-2 border-green-400 text-green-200': result.prediction < 50000,
+                             'bg-yellow-500/30 border-2 border-yellow-400 text-yellow-200': result.prediction >= 50000 && result.prediction < 200000,
+                             'bg-orange-500/30 border-2 border-orange-400 text-orange-200': result.prediction >= 200000 && result.prediction < 500000,
+                             'bg-red-500/30 border-2 border-red-400 text-red-200': result.prediction >= 500000
+                         }">
+                        <span x-show="result.prediction < 50000">✅ Low Impact</span>
+                        <span x-show="result.prediction >= 50000 && result.prediction < 200000">⚠️ Moderate Impact</span>
+                        <span x-show="result.prediction >= 200000 && result.prediction < 500000">🔶 High Impact</span>
+                        <span x-show="result.prediction >= 500000">🚨 Severe Impact</span>
+                    </div>
+                </div>
+                
+                <template x-if="result.baseline_year_range && Math.abs(result.change_percent) < 200">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div class="bg-white/10 rounded-lg p-4 border border-white/20">
+                            <div class="text-sm text-gray-300 mb-1">Historical Baseline</div>
+                            <div class="text-xl font-bold" x-text="result.baseline_year_range"></div>
+                        </div>
+                        <div class="bg-white/10 rounded-lg p-4 border border-white/20">
+                            <div class="text-sm text-gray-300 mb-1">Baseline Displacement</div>
+                            <div class="text-xl font-bold" x-text="Number(result.baseline_displacement).toLocaleString()"></div>
+                        </div>
+                        <div class="bg-white/10 rounded-lg p-4 border border-white/20">
+                            <div class="text-sm text-gray-300 mb-1">Change from Baseline</div>
+                            <div class="text-xl font-bold" 
+                                 :class="result.change_percent > 0 ? 'text-red-300' : 'text-green-300'"
+                                 x-text="result.change_percent.toFixed(1) + '%'">
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="scenarioResults.length > 0">
+                    <div class="mt-8">
+                        <h4 class="text-xl font-bold mb-4 text-center text-purple-200">Compare All Scenarios</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <template x-for="s in scenarioResults" :key="s.name">
+                                <div class="bg-white/10 rounded-lg p-4 border border-white/20">
+                                    <div class="text-sm text-gray-300 mb-1" x-text="s.name"></div>
+                                    <div class="text-2xl font-bold" x-text="Number(s.value).toLocaleString()"></div>
+                                    <div class="text-xs text-gray-400">people</div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <div class="mt-6 p-4 bg-white/10 rounded-lg border border-white/20">
+                    <p class="text-gray-300 leading-relaxed" x-text="result.explanation"></p>
+                </div>
+            </div>
+        </template>
+
+        <template x-if="error">
+            <div class="bg-red-900/30 backdrop-blur-lg rounded-2xl p-6 border border-red-500/50">
+                <p class="text-red-200" x-text="error"></p>
+            </div>
+        </template>
+
+    </div>
+
+</div>
+
+<script>
+    const API = "https://cs463-final.onrender.com";
+
+    document.addEventListener('alpine:init', () => {
+        Alpine.store('country', { iso3: null, name: null });
+        initMap();
+    });
+
+    function initMap() {
+        const map = L.map('map').setView([20, 0], 2);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 5, minZoom: 1
+        }).addTo(map);
+
+        let selectedLayer = null;
+        const defaultStyle = { color: "#444", weight: 1, fillColor: "#1e293b", fillOpacity: 0.7 };
+        const highlightStyle = { color: "#3b82f6", weight: 3, fillColor: "#60a5fa", fillOpacity: 0.8 };
+
+        fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson")
+            .then(res => res.json())
+            .then(geo => {
+                L.geoJSON(geo, {
+                    style: defaultStyle,
+                    onEachFeature: (feature, layer) => {
+                        layer.on("click", () => {
+                            const iso = feature.properties["ISO3166-1-Alpha-3"];
+                            const name = feature.properties.name;
+
+                            if (selectedLayer) selectedLayer.setStyle(defaultStyle);
+                            layer.setStyle(highlightStyle);
+                            selectedLayer = layer;
+
+                            Alpine.store('country').iso3 = iso;
+                            Alpine.store('country').name = name;
+                        });
+                    }
+                }).addTo(map);
+            });
+    }
+
+    function scenarioPredictor() {
+        return {
+            selectedScenario: null,
+            showAdvanced: false,
+            result: null,
+            error: null,
+            scenarioResults: [],
+
+            climateLabels: {
+                tas_mean: { title: "Avg Temperature", min: -10, max: 45, step: 0.1, unit: "°C" },
+                tasmin_mean: { title: "Min Temperature", min: -60, max: 30, step: 0.1, unit: "°C" },
+                tasmax_mean: { title: "Max Temperature", min: -10, max: 50, step: 0.1, unit: "°C" },
+                pr_sum: { title: "Monthly Rainfall", min: 0, max: 2500, step: 10, unit: "mm" },
+                pr_mean: { title: "Daily Rainfall", min: 0, max: 20, step: 0.1, unit: "mm/day" },
+                tas_std: { title: "Temp Variability", min: 0, max: 10, step: 0.1, unit: "°C" },
+                pr_std: { title: "Rainfall Variability", min: 0, max: 15, step: 0.1, unit: "" },
+                tas_anomaly: { title: "Temp Anomaly", min: -5, max: 8, step: 0.1, unit: "°C" },
+                pr_anomaly: { title: "Rainfall Anomaly", min: -5, max: 5, step: 0.1, unit: "mm/day" }
+            },
+
+            climate: {
+                tas_mean: 27, tasmin_mean: 23, tasmax_mean: 31,
+                pr_sum: 2400, pr_mean: 6, tas_std: 1.2,
+                pr_std: 2.0, tas_anomaly: 1.0, pr_anomaly: 0.2
+            },
+
+            disasterLabels: {
+                Flood: { title: "Floods" }, Storm: { title: "Storms" },
+                Drought: { title: "Droughts" }, Earthquake: { title: "Earthquakes" },
+                Wildfire: { title: "Wildfires" }, Extreme_Temperature: { title: "Heat Waves" },
+                Volcanic_activity: { title: "Volcanic" }, Sea_level_Rise: { title: "Sea Rise" },
+                Mass_Movement: { title: "Landslides" }
+            },
+
+            disaster: {
+                Flood: 3, Storm: 2, Drought: 1, Earthquake: 0, Wildfire: 0,
+                Extreme_Temperature: 1, Volcanic_activity: 0, Sea_level_Rise: 1, Mass_Movement: 0
+            },
+
+            scenarios: {
+                current: {
+                    name: "Current Baseline",
+                    climate: { tas_mean: 27, tasmin_mean: 23, tasmax_mean: 31, pr_sum: 2400, pr_mean: 6, tas_std: 1.2, pr_std: 2.0, tas_anomaly: 0.5, pr_anomaly: 0.1 },
+                    disaster: { Flood: 2, Storm: 2, Drought: 1, Earthquake: 0, Wildfire: 0, Extreme_Temperature: 1, Volcanic_activity: 0, Sea_level_Rise: 0, Mass_Movement: 0 }
+                },
+                optimistic: {
+                    name: "Optimistic",
+                    climate: { tas_mean: 28, tasmin_mean: 24, tasmax_mean: 32, pr_sum: 2300, pr_mean: 5.8, tas_std: 1.3, pr_std: 2.1, tas_anomaly: 1.5, pr_anomaly: 0.2 },
+                    disaster: { Flood: 2, Storm: 1, Drought: 1, Earthquake: 0, Wildfire: 1, Extreme_Temperature: 2, Volcanic_activity: 0, Sea_level_Rise: 1, Mass_Movement: 0 }
+                },
+                business: {
+                    name: "Business as Usual",
+                    climate: { tas_mean: 29.5, tasmin_mean: 25.5, tasmax_mean: 33.5, pr_sum: 2100, pr_mean: 5.3, tas_std: 1.6, pr_std: 2.5, tas_anomaly: 2.5, pr_anomaly: -0.3 },
+                    disaster: { Flood: 4, Storm: 3, Drought: 3, Earthquake: 0, Wildfire: 2, Extreme_Temperature: 4, Volcanic_activity: 0, Sea_level_Rise: 2, Mass_Movement: 1 }
+                },
+                worst: {
+                    name: "Worst Case",
+                    climate: { tas_mean: 31, tasmin_mean: 27, tasmax_mean: 35, pr_sum: 1800, pr_mean: 4.5, tas_std: 2.0, pr_std: 3.0, tas_anomaly: 4.0, pr_anomaly: -0.8 },
+                    disaster: { Flood: 6, Storm: 5, Drought: 5, Earthquake: 1, Wildfire: 4, Extreme_Temperature: 6, Volcanic_activity: 0, Sea_level_Rise: 3, Mass_Movement: 2 }
+                }
+            },
+
+            loadScenario(name) {
+                this.selectedScenario = name;
+                const s = this.scenarios[name];
+                this.climate = { ...s.climate };
+                this.disaster = { ...s.disaster };
+            },
+
+            async predictFuture() {
+                this.error = null;
+                this.result = null;
+
+                const iso = Alpine.store('country').iso3;
+                if (!iso) {
+                    this.error = "Please select a country first.";
+                    return;
+                }
+
+                const body = { country: iso, year: 2030, ...this.climate, ...this.disaster };
+
+                try {
+                    const res = await fetch(`${API}/predict_future`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(body)
+                    });
+
+                    if (!res.ok) {
+                        const data = await res.json().catch(() => ({}));
+                        this.error = data.detail || "Prediction error.";
+                        return;
+                    }
+
+                    this.result = await res.json();
+                    await this.compareAllScenarios();
+
+                } catch {
+                    this.error = "Network error.";
+                }
+            },
+
+            async compareAllScenarios() {
+                const iso = Alpine.store('country').iso3;
+                this.scenarioResults = [];
+
+                for (const [key, scenario] of Object.entries(this.scenarios)) {
+                    const body = { country: iso, year: 2030, ...scenario.climate, ...scenario.disaster };
+
+                    try {
+                        const res = await fetch(`${API}/predict_future`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(body)
+                        });
+
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.scenarioResults.push({ name: scenario.name, value: data.prediction });
+                        }
+                    } catch (e) {
+                        console.error(`Failed to load ${key}:`, e);
+                    }
+                }
+            }
+        }
+    }
+</script>
+
+</body>
+</html>
