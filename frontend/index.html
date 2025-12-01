@@ -110,8 +110,8 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <template x-for="(meta, key) in climateLabels" :key="key">
                             <div class="bg-white/5 p-4 rounded-lg border border-white/10">
-                                <label class="text-sm font-medium text-gray-200" x-text="meta.title"></label>
-                                <input type="range" class="w-full mt-2" 
+                                <label :for="'climate-' + key" class="text-sm font-medium text-gray-200" x-text="meta.title"></label>
+                                <input type="range" :id="'climate-' + key" class="w-full mt-2" 
                                        :min="meta.min" :max="meta.max" :step="meta.step"
                                        x-model.number="climate[key]"
                                        @input="selectedScenario = 'custom'">
@@ -129,8 +129,9 @@
                     <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                         <template x-for="(meta, key) in disasterLabels" :key="key">
                             <div class="bg-white/5 p-4 rounded-lg border border-white/10">
-                                <label class="text-sm font-medium text-gray-200" x-text="meta.title"></label>
-                                <input type="range" class="w-full mt-2" min="0" max="10" step="1"
+                                <label :for="'disaster-' + key" class="text-sm font-medium text-gray-200" x-text="meta.title"></label>
+                                <input type="range" :id="'disaster-' + key" class="w-full mt-2" 
+                                       :min="meta.min || 0" :max="meta.max || 10" step="1"
                                        x-model.number="disaster[key]"
                                        @input="selectedScenario = 'custom'">
                                 <div class="text-xs text-gray-400 mt-1" x-text="disaster[key]"></div>
@@ -243,124 +244,361 @@
 
 <script>
     const API = "https://cs463-final.onrender.com";
+    
+    // Map backend disaster keys (with spaces) to API format (with underscores)
+    const DISASTER_KEY_MAP = {
+        "Extreme Temperature": "Extreme_Temperature",
+        "Mass Movement": "Mass_Movement",
+        "Sea level Rise": "Sea_level_Rise",
+        "Mixed disasters": "Mixed_disasters",
+        "Volcanic activity": "Volcanic_activity",
+        "Wave action": "Wave_action"
+    };
 
-    document.addEventListener('alpine:init', () => {
-        Alpine.store('country', { iso3: null, name: null });
-        initMap();
+document.addEventListener("alpine:init", () => {
+
+    Alpine.store('country', { 
+        iso3: null, 
+        name: null,
+        _componentRef: null
     });
 
-    function initMap() {
-        const map = L.map('map').setView([20, 0], 2);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            maxZoom: 5, minZoom: 1
-        }).addTo(map);
+    // -------------------------------
+    // Alpine Component
+    // -------------------------------
+    Alpine.data("scenarioPredictor", () => ({
+        
+        init() {
+            // Store reference to this component instance
+            Alpine.store('country')._componentRef = this;
+        },
 
-        let selectedLayer = null;
-        const defaultStyle = { color: "#444", weight: 1, fillColor: "#1e293b", fillOpacity: 0.7 };
-        const highlightStyle = { color: "#3b82f6", weight: 3, fillColor: "#60a5fa", fillOpacity: 0.8 };
+        // State
+        selectedScenario: null,
+        showAdvanced: false,
+        result: null,
+        error: null,
+        scenarioResults: [],
 
-        fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson")
-            .then(res => res.json())
-            .then(geo => {
-                L.geoJSON(geo, {
-                    style: defaultStyle,
-                    onEachFeature: (feature, layer) => {
-                        layer.on("click", () => {
-                            const iso = feature.properties["ISO3166-1-Alpha-3"];
-                            const name = feature.properties.name;
+        // Dynamic inputs populated from backend
+        climate: {},
+        disaster: {},
+        
+        // Baseline values (stored separately to reset scenarios)
+        baselineClimate: {},
+        baselineDisaster: {},
+        
+        // Dynamic ranges from backend
+        climateRanges: {},
 
-                            if (selectedLayer) selectedLayer.setStyle(defaultStyle);
-                            layer.setStyle(highlightStyle);
-                            selectedLayer = layer;
+        // UI labels with default ranges (will be updated from backend)
+        climateLabels: {
+            tas_mean: { title: "Avg Temperature", min: -10, max: 45, step: 0.1, unit: "°C" },
+            tasmin_mean: { title: "Min Temperature", min: -60, max: 30, step: 0.1, unit: "°C" },
+            tasmax_mean: { title: "Max Temperature", min: -10, max: 50, step: 0.1, unit: "°C" },
+            pr_sum: { title: "Monthly Rainfall", min: 0, max: 2500, step: 10, unit: "mm" },
+            pr_mean: { title: "Daily Rainfall", min: 0, max: 20, step: 0.1, unit: "mm/day" },
+            tas_std: { title: "Temp Variability", min: 0, max: 10, step: 0.1, unit: "°C" },
+            pr_std: { title: "Rainfall Variability", min: 0, max: 15, step: 0.1, unit: "" },
+            tas_anomaly: { title: "Temp Anomaly", min: -5, max: 8, step: 0.1, unit: "°C" },
+            pr_anomaly: { title: "Rainfall Anomaly", min: -5, max: 5, step: 0.1, unit: "mm/day" }
+        },
 
-                            Alpine.store('country').iso3 = iso;
-                            Alpine.store('country').name = name;
-                        });
+        disasterLabels: {
+            Flood: { title: "Floods", min: 0, max: 10 }, 
+            Storm: { title: "Storms", min: 0, max: 10 },
+            Drought: { title: "Droughts", min: 0, max: 10 }, 
+            Earthquake: { title: "Earthquakes", min: 0, max: 10 },
+            Erosion: { title: "Erosion", min: 0, max: 10 },
+            Wildfire: { title: "Wildfires", min: 0, max: 10 }, 
+            Extreme_Temperature: { title: "Heat Waves", min: 0, max: 10 },
+            Volcanic_activity: { title: "Volcanic", min: 0, max: 10 }, 
+            Sea_level_Rise: { title: "Sea Rise", min: 0, max: 10 },
+            Mass_Movement: { title: "Landslides", min: 0, max: 10 },
+            Mixed_disasters: { title: "Mixed Disasters", min: 0, max: 10 },
+            Wave_action: { title: "Wave Action", min: 0, max: 10 }
+        },
+
+        // -------------------------------
+        // Country defaults loader
+        // -------------------------------
+        async loadDefaults(iso3) {
+            // Clear any previous errors when loading new country
+            this.error = null;
+            
+            try {
+                const res = await fetch(`${API}/defaults/${iso3}`);
+                
+                if (!res.ok) {
+                    let errorMessage = "Failed to load country defaults.";
+                    try {
+                        const errorData = await res.json();
+                        errorMessage = errorData.detail || errorMessage;
+                    } catch {
+                        errorMessage = res.statusText || errorMessage;
                     }
-                }).addTo(map);
-            });
-    }
-
-    function scenarioPredictor() {
-        return {
-            selectedScenario: null,
-            showAdvanced: false,
-            result: null,
-            error: null,
-            scenarioResults: [],
-
-            climateLabels: {
-                tas_mean: { title: "Avg Temperature", min: -10, max: 45, step: 0.1, unit: "°C" },
-                tasmin_mean: { title: "Min Temperature", min: -60, max: 30, step: 0.1, unit: "°C" },
-                tasmax_mean: { title: "Max Temperature", min: -10, max: 50, step: 0.1, unit: "°C" },
-                pr_sum: { title: "Monthly Rainfall", min: 0, max: 2500, step: 10, unit: "mm" },
-                pr_mean: { title: "Daily Rainfall", min: 0, max: 20, step: 0.1, unit: "mm/day" },
-                tas_std: { title: "Temp Variability", min: 0, max: 10, step: 0.1, unit: "°C" },
-                pr_std: { title: "Rainfall Variability", min: 0, max: 15, step: 0.1, unit: "" },
-                tas_anomaly: { title: "Temp Anomaly", min: -5, max: 8, step: 0.1, unit: "°C" },
-                pr_anomaly: { title: "Rainfall Anomaly", min: -5, max: 5, step: 0.1, unit: "mm/day" }
-            },
-
-            climate: {
-                tas_mean: 27, tasmin_mean: 23, tasmax_mean: 31,
-                pr_sum: 2400, pr_mean: 6, tas_std: 1.2,
-                pr_std: 2.0, tas_anomaly: 1.0, pr_anomaly: 0.2
-            },
-
-            disasterLabels: {
-                Flood: { title: "Floods" }, Storm: { title: "Storms" },
-                Drought: { title: "Droughts" }, Earthquake: { title: "Earthquakes" },
-                Wildfire: { title: "Wildfires" }, Extreme_Temperature: { title: "Heat Waves" },
-                Volcanic_activity: { title: "Volcanic" }, Sea_level_Rise: { title: "Sea Rise" },
-                Mass_Movement: { title: "Landslides" }
-            },
-
-            disaster: {
-                Flood: 3, Storm: 2, Drought: 1, Earthquake: 0, Wildfire: 0,
-                Extreme_Temperature: 1, Volcanic_activity: 0, Sea_level_Rise: 1, Mass_Movement: 0
-            },
-
-            scenarios: {
-                current: {
-                    name: "Current Baseline",
-                    climate: { tas_mean: 27, tasmin_mean: 23, tasmax_mean: 31, pr_sum: 2400, pr_mean: 6, tas_std: 1.2, pr_std: 2.0, tas_anomaly: 0.5, pr_anomaly: 0.1 },
-                    disaster: { Flood: 2, Storm: 2, Drought: 1, Earthquake: 0, Wildfire: 0, Extreme_Temperature: 1, Volcanic_activity: 0, Sea_level_Rise: 0, Mass_Movement: 0 }
-                },
-                optimistic: {
-                    name: "Optimistic",
-                    climate: { tas_mean: 28, tasmin_mean: 24, tasmax_mean: 32, pr_sum: 2300, pr_mean: 5.8, tas_std: 1.3, pr_std: 2.1, tas_anomaly: 1.5, pr_anomaly: 0.2 },
-                    disaster: { Flood: 2, Storm: 1, Drought: 1, Earthquake: 0, Wildfire: 1, Extreme_Temperature: 2, Volcanic_activity: 0, Sea_level_Rise: 1, Mass_Movement: 0 }
-                },
-                business: {
-                    name: "Business as Usual",
-                    climate: { tas_mean: 29.5, tasmin_mean: 25.5, tasmax_mean: 33.5, pr_sum: 2100, pr_mean: 5.3, tas_std: 1.6, pr_std: 2.5, tas_anomaly: 2.5, pr_anomaly: -0.3 },
-                    disaster: { Flood: 4, Storm: 3, Drought: 3, Earthquake: 0, Wildfire: 2, Extreme_Temperature: 4, Volcanic_activity: 0, Sea_level_Rise: 2, Mass_Movement: 1 }
-                },
-                worst: {
-                    name: "Worst Case",
-                    climate: { tas_mean: 31, tasmin_mean: 27, tasmax_mean: 35, pr_sum: 1800, pr_mean: 4.5, tas_std: 2.0, pr_std: 3.0, tas_anomaly: 4.0, pr_anomaly: -0.8 },
-                    disaster: { Flood: 6, Storm: 5, Drought: 5, Earthquake: 1, Wildfire: 4, Extreme_Temperature: 6, Volcanic_activity: 0, Sea_level_Rise: 3, Mass_Movement: 2 }
+                    this.error = errorMessage;
+                    return;
                 }
+                
+                const data = await res.json();
+
+                // Update slider ranges from backend if available
+                if (data.ranges && data.ranges.climate) {
+                    this.climateRanges = data.ranges.climate;
+                    // Update climateLabels with dynamic ranges
+                    for (const key in this.climateLabels) {
+                        if (data.ranges.climate[key]) {
+                            this.climateLabels[key].min = data.ranges.climate[key].min;
+                            this.climateLabels[key].max = data.ranges.climate[key].max;
+                        }
+                    }
+                }
+                
+                if (data.ranges && data.ranges.disaster) {
+                    // Update disasterLabels with dynamic ranges
+                    for (const [backendKey, apiKey] of Object.entries(DISASTER_KEY_MAP)) {
+                        if (data.ranges.disaster[backendKey] && this.disasterLabels[apiKey]) {
+                            this.disasterLabels[apiKey].min = Math.max(0, data.ranges.disaster[backendKey].min);
+                            this.disasterLabels[apiKey].max = data.ranges.disaster[backendKey].max;
+                        }
+                    }
+                    
+                    // Update other disaster keys that don't need transformation
+                    for (const key in data.ranges.disaster) {
+                        if (!DISASTER_KEY_MAP[key] && this.disasterLabels[key]) {
+                            this.disasterLabels[key].min = Math.max(0, data.ranges.disaster[key].min);
+                            this.disasterLabels[key].max = data.ranges.disaster[key].max;
+                        }
+                    }
+                }
+
+                // Store baseline values and clamp to ranges
+                this.baselineClimate = {};
+                for (const key in data.climate) {
+                    const value = data.climate[key];
+                    const range = this.climateRanges[key] || this.climateLabels[key];
+                    if (range) {
+                        // Clamp value to range
+                        this.baselineClimate[key] = Math.max(range.min || -Infinity, 
+                                                             Math.min(range.max || Infinity, value));
+                    } else {
+                        this.baselineClimate[key] = value;
+                    }
+                }
+                
+                this.baselineDisaster = {};
+                
+                // Transform disaster keys from backend format (spaces) to API format (underscores)
+                for (const [backendKey, apiKey] of Object.entries(DISASTER_KEY_MAP)) {
+                    if (data.disaster[backendKey] !== undefined) {
+                        const value = data.disaster[backendKey];
+                        const range = data.ranges?.disaster?.[backendKey];
+                        // Clamp disaster value to range (min 0, max from range or default 10)
+                        const maxVal = range?.max || 10;
+                        this.baselineDisaster[apiKey] = Math.max(0, Math.min(maxVal, value));
+                    }
+                }
+                
+                // Copy other disaster keys that don't need transformation
+                for (const key in data.disaster) {
+                    if (!DISASTER_KEY_MAP[key] && data.disaster[key] !== undefined) {
+                        const value = data.disaster[key];
+                        const range = data.ranges?.disaster?.[key];
+                        const maxVal = range?.max || 10;
+                        this.baselineDisaster[key] = Math.max(0, Math.min(maxVal, value));
+                    }
+                }
+                
+                // Reset to baseline and apply current scenario
+                this.climate = { ...this.baselineClimate };
+                this.disaster = { ...this.baselineDisaster };
+                this.selectedScenario = "current";
+
+            } catch (e) {
+                // Only show network error for actual network failures
+                if (e instanceof TypeError && e.message.includes('fetch')) {
+                    this.error = "Network error. Please check your connection.";
+                } else {
+                    console.error("Could not load defaults:", e);
+                    this.error = `Failed to load defaults: ${e.message || "Unknown error"}`;
+                }
+            }
+        },
+
+        // --------------------------------------------
+        // Scenario relative deltas
+        // --------------------------------------------
+        scenarioDeltas: {
+            temp: {
+                optimistic: 0.5,
+                current: 0.0,
+                business: 1.5,
+                worst: 3.0
             },
-
-            loadScenario(name) {
-                this.selectedScenario = name;
-                const s = this.scenarios[name];
-                this.climate = { ...s.climate };
-                this.disaster = { ...s.disaster };
+            rain: {
+                optimistic: 0.0,
+                current: 0.0,
+                business: -0.1,
+                worst: -0.3
             },
+            disasterMultiplier: {
+                optimistic: 0.9,
+                current: 1.0,
+                business: 1.2,
+                worst: 1.5
+            }
+        },
 
-            async predictFuture() {
-                this.error = null;
-                this.result = null;
+        // --------------------------------------------
+        // Apply scenario relative to baseline defaults
+        // --------------------------------------------
+        loadScenario(name) {
+            if (!this.baselineClimate || Object.keys(this.baselineClimate).length === 0) return;
 
-                const iso = Alpine.store('country').iso3;
-                if (!iso) {
-                    this.error = "Please select a country first.";
+            this.selectedScenario = name;
+
+            const tdelta = this.scenarioDeltas.temp[name];
+            const rdelta = this.scenarioDeltas.rain[name];
+            const mult = this.scenarioDeltas.disasterMultiplier[name];
+
+            // Reset to baseline first
+            this.climate = { ...this.baselineClimate };
+            this.disaster = { ...this.baselineDisaster };
+
+            // Apply temperature-related deltas and clamp to ranges
+            this.climate = {
+                ...this.climate,
+                tas_mean: this.clampValue(this.baselineClimate.tas_mean + tdelta, 'tas_mean'),
+                tasmin_mean: this.clampValue(this.baselineClimate.tasmin_mean + tdelta * 0.8, 'tasmin_mean'),
+                tasmax_mean: this.clampValue(this.baselineClimate.tasmax_mean + tdelta * 1.2, 'tasmax_mean'),
+                tas_anomaly: this.clampValue(this.baselineClimate.tas_anomaly + tdelta, 'tas_anomaly'),
+                pr_anomaly: this.clampValue(this.baselineClimate.pr_anomaly + rdelta, 'pr_anomaly')
+            };
+
+            // Disaster counts scaled relative to baseline and clamp to ranges
+            let newDisasters = {};
+            for (let key in this.baselineDisaster) {
+                const scaled = this.baselineDisaster[key] * mult;
+                newDisasters[key] = this.clampDisasterValue(scaled, key);
+            }
+            this.disaster = newDisasters;
+        },
+
+        // -------------------------------
+        // Predict future displacement
+        // -------------------------------
+        async predictFuture() {
+            this.error = null;
+            this.result = null;
+
+            const iso = Alpine.store('country').iso3;
+            if (!iso) {
+                this.error = "Please select a country first.";
+                return;
+            }
+
+            const body = {
+                country: iso,
+                year: 2030,
+                ...this.climate,
+                ...this.disaster
+            };
+
+            try {
+                const res = await fetch(`${API}/predict_future`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body)
+                });
+
+                if (!res.ok) {
+                    let errorMessage = "Prediction error.";
+                    try {
+                        const data = await res.json();
+                        errorMessage = data.detail || errorMessage;
+                    } catch {
+                        // If JSON parsing fails, use status text
+                        errorMessage = res.statusText || errorMessage;
+                    }
+                    this.error = errorMessage;
                     return;
                 }
 
-                const body = { country: iso, year: 2030, ...this.climate, ...this.disaster };
+                this.result = await res.json();
+                
+                // Compare scenarios in background - don't let errors here affect main result
+                try {
+                    await this.compareAllScenarios();
+                } catch (e) {
+                    console.error("Failed to compare scenarios:", e);
+                    // Don't set this.error - the main prediction succeeded
+                }
+
+            } catch (e) {
+                // Only show network error for actual network failures
+                if (e instanceof TypeError && e.message.includes('fetch')) {
+                    this.error = "Network error. Please check your connection.";
+                } else {
+                    this.error = `Error: ${e.message || "Unknown error occurred."}`;
+                }
+            }
+        },
+
+        // -------------------------------
+        // Helper: Clamp climate value to range
+        // -------------------------------
+        clampValue(value, key) {
+            const range = this.climateRanges[key] || this.climateLabels[key];
+            if (range) {
+                return Math.max(range.min || -Infinity, Math.min(range.max || Infinity, value));
+            }
+            return value;
+        },
+        
+        // -------------------------------
+        // Helper: Clamp disaster value to range
+        // -------------------------------
+        clampDisasterValue(value, key) {
+            const meta = this.disasterLabels[key];
+            if (meta) {
+                return Math.max(meta.min || 0, Math.min(meta.max || 10, value));
+            }
+            return Math.max(0, value);
+        },
+        
+        // -------------------------------
+        // Compare all scenarios
+        // -------------------------------
+        async compareAllScenarios() {
+            const iso = Alpine.store('country').iso3;
+            this.scenarioResults = [];
+
+            if (!this.baselineClimate || Object.keys(this.baselineClimate).length === 0) return;
+
+            const scenarioNames = ["current", "optimistic", "business", "worst"];
+
+            for (const name of scenarioNames) {
+                // Start from baseline
+                let tempClimate = structuredClone(this.baselineClimate);
+                let tempDisaster = structuredClone(this.baselineDisaster);
+
+                const tdelta = this.scenarioDeltas.temp[name];
+                const rdelta = this.scenarioDeltas.rain[name];
+                const mult = this.scenarioDeltas.disasterMultiplier[name];
+
+                // Apply deltas to baseline
+                tempClimate.tas_mean = this.baselineClimate.tas_mean + tdelta;
+                tempClimate.tasmax_mean = this.baselineClimate.tasmax_mean + tdelta * 1.2;
+                tempClimate.tasmin_mean = this.baselineClimate.tasmin_mean + tdelta * 0.8;
+                tempClimate.tas_anomaly = this.baselineClimate.tas_anomaly + tdelta;
+                tempClimate.pr_anomaly = this.baselineClimate.pr_anomaly + rdelta;
+
+                for (let key in tempDisaster) {
+                    tempDisaster[key] = this.baselineDisaster[key] * mult;
+                }
+
+                const body = { country: iso, year: 2030, ...tempClimate, ...tempDisaster };
 
                 try {
                     const res = await fetch(`${API}/predict_future`, {
@@ -369,45 +607,65 @@
                         body: JSON.stringify(body)
                     });
 
-                    if (!res.ok) {
-                        const data = await res.json().catch(() => ({}));
-                        this.error = data.detail || "Prediction error.";
-                        return;
-                    }
-
-                    this.result = await res.json();
-                    await this.compareAllScenarios();
-
-                } catch {
-                    this.error = "Network error.";
-                }
-            },
-
-            async compareAllScenarios() {
-                const iso = Alpine.store('country').iso3;
-                this.scenarioResults = [];
-
-                for (const [key, scenario] of Object.entries(this.scenarios)) {
-                    const body = { country: iso, year: 2030, ...scenario.climate, ...scenario.disaster };
-
-                    try {
-                        const res = await fetch(`${API}/predict_future`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(body)
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.scenarioResults.push({
+                            name: name.charAt(0).toUpperCase() + name.slice(1),
+                            value: data.prediction
                         });
-
-                        if (res.ok) {
-                            const data = await res.json();
-                            this.scenarioResults.push({ name: scenario.name, value: data.prediction });
-                        }
-                    } catch (e) {
-                        console.error(`Failed to load ${key}:`, e);
                     }
+                } catch (e) {
+                    console.error("Scenario compare failed:", name, e);
                 }
             }
         }
-    }
+    }));
+
+    initMap();
+});
+
+// -------------------------------
+// Map + country selection
+// -------------------------------
+function initMap() {
+    const map = L.map("map").setView([20, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 5,
+        minZoom: 1
+    }).addTo(map);
+
+    let selectedLayer = null;
+    const defaultStyle = { color: "#444", weight: 1, fillColor: "#1e293b", fillOpacity: 0.7 };
+    const hlStyle = { color: "#3b82f6", weight: 3, fillColor: "#60a5fa", fillOpacity: 0.8 };
+
+    fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson")
+        .then(res => res.json())
+        .then(geo => {
+            L.geoJSON(geo, {
+                style: defaultStyle,
+                onEachFeature: (feature, layer) => {
+                    layer.on("click", () => {
+                        const iso = feature.properties["ISO3166-1-Alpha-3"];
+                        const name = feature.properties.name;
+
+                        if (selectedLayer) selectedLayer.setStyle(defaultStyle);
+                        layer.setStyle(hlStyle);
+                        selectedLayer = layer;
+
+                        Alpine.store('country').iso3 = iso;
+                        Alpine.store('country').name = name;
+
+                        // call Alpine component method
+                        const component = Alpine.store('country')._componentRef;
+                        if (component && component.loadDefaults) {
+                            component.loadDefaults(iso);
+                        }
+
+                    });
+                }
+            }).addTo(map);
+        });
+}
 </script>
 
 </body>

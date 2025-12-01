@@ -1,0 +1,11 @@
+# Python venv
+venv/
+**/venv/
+
+# Editor stuff
+.vscode/
+.idea/
+
+# Python junk
+__pycache__/
+*.pyc

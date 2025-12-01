@@ -204,3 +204,80 @@ def predict_future(payload: FutureInput):
         "num_events": int(total_events),
         "explanation": explanation
     }
+
+@app.get("/defaults/{iso3}")
+def get_country_defaults(iso3: str):
+    """Return recent-average climate and disaster defaults for a given country."""
+    country_data = df[df["ISO3"] == iso3].sort_values("Year")
+
+    if country_data.empty:
+        raise HTTPException(status_code=404, detail=f"No data for country: {iso3}")
+
+    # Use last 5 years as the baseline
+    recent = country_data.tail(5)
+
+    # Climate features
+    climate_cols = [
+        "tas_mean", "tasmin_mean", "tasmax_mean",
+        "pr_sum", "pr_mean",
+        "tas_std", "pr_std",
+        "tas_anomaly", "pr_anomaly"
+    ]
+
+    climate_defaults = {
+        col: float(recent[col].mean()) for col in climate_cols
+        if col in recent.columns
+    }
+
+    # Calculate ranges for climate variables (from full dataset for reasonable bounds)
+    climate_ranges = {}
+    for col in climate_cols:
+        if col in df.columns:
+            col_min = float(df[col].min())
+            col_max = float(df[col].max())
+            # Add padding (10% on each side) for better UX
+            padding = (col_max - col_min) * 0.1 if col_max > col_min else abs(col_min) * 0.1 if col_min != 0 else 1
+            climate_ranges[col] = {
+                "min": float(col_min - padding),
+                "max": float(col_max + padding)
+            }
+
+    # Disaster features
+    disaster_cols = [
+        "Drought", "Earthquake", "Erosion",
+        "Extreme Temperature", "Flood",
+        "Mass Movement", "Mixed disasters",
+        "Sea level Rise", "Storm",
+        "Volcanic activity", "Wave action", "Wildfire"
+    ]
+
+    disaster_defaults = {
+        col: float(recent[col].mean()) for col in disaster_cols
+        if col in recent.columns
+    }
+
+    # Calculate ranges for disaster variables
+    disaster_ranges = {}
+    for col in disaster_cols:
+        if col in df.columns:
+            col_min = float(df[col].min())
+            col_max = float(df[col].max())
+            # Add padding for disasters too
+            padding = (col_max - col_min) * 0.1 if col_max > col_min else 1
+            disaster_ranges[col] = {
+                "min": float(max(0, col_min - padding)),  # Disasters can't be negative
+                "max": float(col_max + padding)
+            }
+
+    # Add population baseline
+    population_default = float(recent["Population"].mean())
+
+    return {
+        "climate": climate_defaults,
+        "disaster": disaster_defaults,
+        "population": population_default,
+        "ranges": {
+            "climate": climate_ranges,
+            "disaster": disaster_ranges
+        }
+    }
